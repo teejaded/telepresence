@@ -2,9 +2,11 @@ package cli_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -430,10 +432,15 @@ func (cs *connectedSuite) SetupSuite() {
 
 	// Connect + quit before we change contexts to ensure the
 	// traffic-manager is installed
-	_, stderr := telepresence(cs.T(), "connect")
+	configDir := cs.T().TempDir()
+	registry := dtest.DockerRegistry(c)
+	configYml := fmt.Sprintf("logLevels:\n  rootDaemon: debug\nimages:\n  registry: %s\ntimeouts:\n    intercept: 20s\n    trafficManagerAPI: 120s", registry)
+	c, err := client.SetConfig(c, configDir, configYml)
+
+	_, stderr := telepresenceContext(c, "connect")
 	require.Empty(stderr)
 	time.Sleep(time.Second) // Allow some time before we quit
-	_, stderr = telepresence(cs.T(), "quit")
+	_, stderr = telepresenceContext(c, "quit")
 	require.Empty(stderr)
 	require.NoError(cs.tpSuite.capturePodLogs(c, "traffic-manager", cs.tpSuite.managerTestNamespace))
 
@@ -441,10 +448,6 @@ func (cs *connectedSuite) SetupSuite() {
 		return run(c, "kubectl", "config", "use-context", "telepresence-test-developer") == nil
 	}, 10*time.Second, time.Second)
 
-	configDir := cs.T().TempDir()
-	registry := dtest.DockerRegistry(c)
-	configYml := fmt.Sprintf("logLevels:\n  rootDaemon: debug\nimages:\n  registry: %s\ntimeouts:\n    intercept: 20s\n", registry)
-	c, err := client.SetConfig(c, configDir, configYml)
 	require.NoError(err)
 	stdout, stderr := telepresenceContext(c, "connect")
 	require.Empty(stderr)
@@ -454,7 +457,7 @@ func (cs *connectedSuite) SetupSuite() {
 	require.Eventually(
 		// condition
 		func() bool {
-			stdout, _ := telepresence(cs.T(), "status")
+			stdout, _ := telepresenceContext(c, "status")
 			return regexp.MustCompile(`Telepresence proxy:\s+ON`).FindString(stdout) != ""
 		},
 		15*time.Second, // waitFor
@@ -783,6 +786,40 @@ func (cs *connectedSuite) TestN_ToPodPortForwarding() {
 			return run(ctx, "curl", "--silent", "localhost:8083") != nil
 		}, 3*time.Second, 1*time.Second)
 	})
+}
+
+func (cs *connectedSuite) TestO_LargeRequest() {
+	require := cs.Require()
+	client := &http.Client{}
+	b := make([]byte, 1024*1024*5)
+	b[0] = '!'
+	b[1] = '\n'
+	for i := range b[2:] {
+		b[i+2] = 'A'
+	}
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("http://hello-0.%s/put", cs.ns()), bytes.NewBuffer(b))
+	require.NoError(err)
+
+	resp, err := client.Do(req)
+	require.NoError(err)
+	defer resp.Body.Close()
+	require.Equal(resp.StatusCode, 200)
+
+	buf := make([]byte, 1)
+	_, err = resp.Body.Read(buf)
+	for err == nil && buf[0] != '!' {
+		_, err = resp.Body.Read(buf)
+	}
+	require.NoError(err)
+	_, err = resp.Body.Read(buf)
+	require.NoError(err)
+
+	buf = make([]byte, len(b)-2)
+	i, err := resp.Body.Read(buf)
+	require.Truef(err == nil || err == io.EOF, "Unexpected error %v", err)
+	// Do this instead of cs.Equal(b[2:], buf) so that on failure we don't print two 5MB buffers to the terminal
+	cs.Equal(0, bytes.Compare(b[2:], buf))
+	cs.Equal(len(buf), i)
 }
 
 func (cs *connectedSuite) TestZ_Uninstall() {
