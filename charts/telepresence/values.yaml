@@ -63,14 +63,6 @@ service:
 # Default: debug
 logLevel: debug
 
-# Telepresence requires a clusterID for identifying itself.
-# This cluster ID is just the UID of the default namespace. You can get this by
-# running `kubectl get ns default -o jsonpath='{.metadata.uid}'`
-# Telepresence will not be able to request a license without this.
-#
-# Default: ""
-clusterID: ""
-
 # Telepresence requires a license key for creating selective intercepts. In
 # normal clusters with access to the public internet, this license is managed
 # automatically by the Ambassador Cloud. In air-gapped environments however, 
