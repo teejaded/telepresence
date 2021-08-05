@@ -75,7 +75,9 @@ func FindMatchingServices(c context.Context, client *kates.Client, portNameOrNum
 
 	var matching []*kates.Service
 	for _, svc := range svcs {
-		if (svcName == "" || svc.Name == svcName) && labelsMatch(svc.Spec.Selector) && len(svcPortByNameOrNumber(svc, portNameOrNumber)) > 0 {
+		if svcName != "" && svc.Name == svcName && len(svcPortByNameOrNumber(svc, portNameOrNumber)) > 0 {
+			matching = append(matching, svc)
+		} else if (svcName == "" || svc.Name == svcName) && labelsMatch(svc.Spec.Selector) && len(svcPortByNameOrNumber(svc, portNameOrNumber)) > 0 {
 			matching = append(matching, svc)
 		}
 	}
